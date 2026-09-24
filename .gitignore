@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE / editors
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# Large datasets
+data/raw/
+data/videos/
+data/frames/
+data/processed/
+
+# Generated outputs
+outputs/
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python packaging
+build/
+dist/
+*.egg-info/

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "physical-ai-data-engine"
+version = "0.1.0"
+description = "Physical AI data engine for video perception, scene understanding, semantic search, and model evaluation."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+
+authors = [
+    { name = "Ravi" }
+]
+
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
