@@ -1,3 +1,43 @@
+# PhysicalAI Data Engine
+
+PhysicalAI Data Engine converts raw physical-world video into structured, searchable, and AI-ready data for perception, scene understanding, semantic search, evaluation, and future synthetic-data workflows.
+
+<p align="center">
+  <img src="docs/images/tracking_pipeline.svg" alt="Multi-object tracking pipeline" width="1000">
+</p>
+
+## Roadmap
+
+- ✅ Phase 0 — Environment and project foundation
+- ✅ Phase 1 — Video ingestion and frame sampling
+- ✅ Phase 2 — Object detection
+- 🚧 Phase 3 — Multi-object tracking
+- ⏳ Phase 4 — Persistent data engine + web UI
+- ⏳ Phase 5 — VLM / GenAI scene understanding
+- ⏳ Phase 6 — Scene graph + semantic search
+- ⏳ Phase 7 — Model failure mining
+- ⏳ Phase 8 — Synthetic scenario generation
+
+The platform direction is:
+
+```text
+Raw video / sensors
+        ↓
+Video ingestion
+        ↓
+Detection + tracking
+        ↓
+VLM / GenAI scene understanding
+        ↓
+Scene graph + semantic search
+        ↓
+Failure mining / evaluation
+        ↓
+Synthetic scenario generation
+```
+
+---
+
 # Phase 3 — Multi-Object Tracking
 
 Phase 3 extends frame-level object detection into temporal object tracking.
@@ -113,7 +153,7 @@ This reduces jitter and improves association between frames.
 ## Intersection over Union — IoU
 
 <p align="center">
-  <img src="docs/images/iou_concept.png"
+  <img src="docs/images/IoU%20Explained_%20Bounding%20Box%20Overlap.png"
        alt="Intersection over Union explanation"
        width="900">
 </p>

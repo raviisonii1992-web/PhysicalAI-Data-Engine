@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430">
+  <rect width="1200" height="430" fill="white"/>
+  <text x="600" y="42" text-anchor="middle" font-family="Arial" font-size="30" font-weight="bold">Multi-Object Tracking Pipeline</text>
+  <g font-family="Arial" font-size="18" text-anchor="middle">
+    <rect x="40" y="145" width="150" height="70" rx="12" fill="#eef5ff" stroke="#2f6fed" stroke-width="2"/>
+    <text x="115" y="185">Video Frame</text>
+    <rect x="240" y="145" width="170" height="70" rx="12" fill="#eef5ff" stroke="#2f6fed" stroke-width="2"/>
+    <text x="325" y="175">YOLO</text><text x="325" y="198">Detection</text>
+    <rect x="460" y="75" width="180" height="70" rx="12" fill="#fff7e6" stroke="#d98200" stroke-width="2"/>
+    <text x="550" y="105">Existing Tracks</text><text x="550" y="128">+ Motion Prediction</text>
+    <rect x="460" y="220" width="180" height="70" rx="12" fill="#eef5ff" stroke="#2f6fed" stroke-width="2"/>
+    <text x="550" y="260">Current Detections</text>
+    <rect x="710" y="145" width="190" height="70" rx="12" fill="#f3eefe" stroke="#7b3fc6" stroke-width="2"/>
+    <text x="805" y="175">Data Association</text><text x="805" y="198">Cost Matrix + LAP</text>
+    <rect x="950" y="65" width="180" height="60" rx="12" fill="#eaf8ef" stroke="#2d8a4e" stroke-width="2"/>
+    <text x="1040" y="102">Matched → Update</text>
+    <rect x="950" y="160" width="180" height="60" rx="12" fill="#fff7e6" stroke="#d98200" stroke-width="2"/>
+    <text x="1040" y="197">Unmatched Track → Lost</text>
+    <rect x="950" y="255" width="180" height="60" rx="12" fill="#fdeeee" stroke="#c0392b" stroke-width="2"/>
+    <text x="1040" y="292">Unmatched Detection → New</text>
+  </g>
+  <g stroke="#555" stroke-width="3" fill="none" marker-end="url(#arrow)">
+    <path d="M190 180 L240 180"/>
+    <path d="M410 180 L460 255"/>
+    <path d="M640 110 L710 165"/>
+    <path d="M640 255 L710 195"/>
+    <path d="M900 170 L950 95"/>
+    <path d="M900 180 L950 190"/>
+    <path d="M900 195 L950 285"/>
+  </g>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#555"/>
+    </marker>
+  </defs>
+  <text x="600" y="385" text-anchor="middle" font-family="Arial" font-size="20">Detection tells what and where. Tracking adds identity and motion over time.</text>
+</svg>
