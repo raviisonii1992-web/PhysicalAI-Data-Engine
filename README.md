@@ -1,12 +1,59 @@
 # PhysicalAI Data Engine
 
-PhysicalAI Data Engine converts raw physical-world video into structured, searchable, and AI-ready data for perception, scene understanding, semantic search, evaluation, and future synthetic-data workflows.
+PhysicalAI Data Engine is a modular platform for converting raw physical-world sensor data into structured, searchable, explainable, and AI-ready scene intelligence.
 
-<p align="center">
-  <img src="docs/images/tracking_pipeline.svg" alt="Multi-object tracking pipeline" width="1000">
-</p>
+The long-term goal is to create a reusable data engine for domains such as **ADAS / autonomous driving, robotics, warehouse automation, industrial systems, agriculture, drones, and security cameras**.
 
-## Roadmap
+Instead of stopping at frame-level perception, the system is being designed to answer higher-level questions such as:
+
+- What objects are present?
+- Which object is which across time?
+- How are those objects moving?
+- What happened in a scene?
+- Which scenarios are safety-critical or unusual?
+- Where did a perception or decision model fail?
+- Can those scenarios be searched, clustered, regenerated, and used for retraining?
+
+---
+
+## Product Vision
+
+```mermaid
+flowchart TD
+    A[Raw Physical-World Data<br/>Video / Camera / Radar / LiDAR / CAN / IMU] --> B[Ingestion & Synchronization]
+    B --> C[Perception<br/>Detection + Tracking]
+    C --> D[Temporal Scene Representation]
+    D --> E[VLM / GenAI Scene Understanding]
+    E --> F[Scene Graph + Semantic Search]
+    F --> G[Evaluation + Failure Mining]
+    G --> H[Synthetic Scenario Generation]
+    H --> I[Retrain / Re-evaluate Models]
+    I --> G
+```
+
+The platform direction is therefore:
+
+```text
+Raw data
+   ↓
+Perception
+   ↓
+Persistent temporal tracks
+   ↓
+Scene understanding
+   ↓
+Searchable scene intelligence
+   ↓
+Failure mining / evaluation
+   ↓
+Synthetic-data feedback loop
+```
+
+The current implementation starts with video because it provides a practical foundation for building and validating the full PhysicalAI pipeline.
+
+---
+
+## Current Roadmap
 
 - ✅ Phase 0 — Environment and project foundation
 - ✅ Phase 1 — Video ingestion and frame sampling
@@ -18,132 +65,187 @@ PhysicalAI Data Engine converts raw physical-world video into structured, search
 - ⏳ Phase 7 — Model failure mining
 - ⏳ Phase 8 — Synthetic scenario generation
 
-The platform direction is:
+---
+
+# Current Milestone — Custom Multi-Object Tracking Core
+
+Phase 3 extends frame-level object detection into **temporal identity and motion estimation**.
+
+Object detection answers:
 
 ```text
-Raw video / sensors
-        ↓
-Video ingestion
-        ↓
-Detection + tracking
-        ↓
-VLM / GenAI scene understanding
-        ↓
-Scene graph + semantic search
-        ↓
-Failure mining / evaluation
-        ↓
-Synthetic scenario generation
+What objects are visible in this frame?
+Where are they?
+```
+
+Tracking adds:
+
+```text
+Is this the same object seen in previous frames?
+What persistent ID should it have?
+How is it moving?
+What is its lifecycle state?
+```
+
+The project initially used **YOLO11 + BoT-SORT** as a baseline to study mature tracker behavior. The current milestone goes further by implementing the core tracking pipeline explicitly rather than treating the tracker as a black box.
+
+---
+
+## End-to-End Tracking Flow
+
+```mermaid
+flowchart TD
+    A[Video Frame] --> B[YOLO11 Object Detector]
+    B --> C[Detection Objects<br/>class + confidence + bbox]
+
+    D[Existing Tracks] --> E[Kalman Prediction]
+    E --> F[Predicted Bounding Boxes]
+
+    C --> G[IoU Cost Matrix]
+    F --> G
+
+    G --> H[Gating]
+    H --> I[Global LAP Assignment]
+
+    I --> J[Matched Pairs]
+    I --> K[Unmatched Tracks]
+    I --> L[Unmatched Detections]
+
+    J --> M[Kalman Measurement Update]
+    M --> N[Update Existing Track]
+
+    K --> O[Mark Track LOST]
+    O --> P{Missing too long?}
+    P -->|No| Q[Keep Track Alive]
+    P -->|Yes| R[Mark REMOVED]
+
+    L --> S[Create New Track]
+
+    N --> T[Persistent Track Set]
+    Q --> T
+    S --> T
 ```
 
 ---
 
-# Phase 3 — Multi-Object Tracking
+## Software Architecture
 
-Phase 3 extends frame-level detection into temporal object identity and motion estimation.
-
-The current milestone now includes a **custom multi-object tracking core built from first principles**, in addition to earlier BoT-SORT experiments.
-
-## Current custom tracking pipeline
-
-```text
-YOLO detections
-      │
-      ▼
-Detection abstraction
-      │
-      ▼
-Existing TrackedObject instances
-      │
-      ▼
-Kalman prediction
-      │
-      ▼
-Predicted bounding boxes
-      │
-      ├──────────────────────┐
-      │                      │
-      ▼                      ▼
-Track boxes             Detection boxes
-      │                      │
-      └──────────┬───────────┘
-                 ▼
-            IoU cost matrix
-                 │
-                 ▼
-               Gating
-                 │
-                 ▼
-          Global LAP assignment
-                 │
-       ┌─────────┼───────────┐
-       ▼         ▼           ▼
-    Matched   Unmatched    Unmatched
-     pairs      tracks     detections
-       │         │           │
-       ▼         ▼           ▼
-   Kalman       LOST       Create
-    update      state      new track
-       │         │           │
-       └─────────┼───────────┘
-                 ▼
-         Persistent track IDs
+```mermaid
+flowchart LR
+    A[detection.py<br/>Detection + BoundingBox] --> B[tracking.py<br/>TrackedObject]
+    C[kalman_filter.py<br/>Motion Estimation] --> B
+    B --> D[association.py<br/>Cost Matrix + LAP]
+    E[tracking_utils.py<br/>IoU / Tracking Math] --> D
+    D --> F[tracker.py<br/>ObjectTracker]
+    B --> F
+    A --> F
 ```
 
-## Core implementation
+The architecture separates responsibilities so each component can evolve independently.
 
-### Detection abstraction
+### Core source files
 
-`src/physical_ai/perception/detection.py`
+| File | Responsibility |
+|---|---|
+| `detection.py` | Detector-neutral `Detection` and `BoundingBox` abstractions |
+| `kalman_filter.py` | Motion state, covariance, prediction, correction |
+| `tracking.py` | `TrackedObject`, lifecycle, trajectory and Kalman integration |
+| `tracking_utils.py` | IoU and tracking-related math helpers |
+| `association.py` | IoU cost matrix, gating and global LAP assignment |
+| `tracker.py` | Frame-by-frame tracking orchestration |
 
-Detector-specific outputs are converted into reusable `Detection` and `BoundingBox` objects so downstream tracking code is not tightly coupled to Ultralytics.
+---
 
-### Track state and lifecycle
+# Detection Abstraction
 
-`src/physical_ai/perception/tracking.py`
-
-Each `TrackedObject` owns:
-
-- session-local track ID
-- class and confidence
-- latest filtered bounding box
-- lifecycle state: `NEW`, `ACTIVE`, `LOST`, `REMOVED`
-- `age`, `hits`, and `time_since_update`
-- center-point history
-- its own Kalman motion filter
-
-Lifecycle:
+Detector-specific output is converted into reusable objects:
 
 ```text
-NEW
- │ matched
- ▼
-ACTIVE
- │ missed
- ▼
-LOST
- ├── matched again ──> ACTIVE
- └── timeout ────────> REMOVED
+YOLO result
+    ↓
+Detection
+├── class_id
+├── class_name
+├── confidence
+└── BoundingBox
 ```
 
-### Kalman motion estimation
+This prevents the downstream tracking system from being tightly coupled to Ultralytics.
 
-`src/physical_ai/perception/kalman_filter.py`
+That means the tracking architecture can later consume detections from another model, simulation, stored annotations, or a different perception stack.
 
-The current learning-oriented state is:
+---
+
+# Persistent Track Object
+
+A frame-level detection becomes a temporal object:
+
+```text
+TrackedObject
+├── track_id
+├── class
+├── confidence
+├── bbox
+├── lifecycle state
+├── age
+├── hits
+├── time_since_update
+├── position history
+└── KalmanFilter2D
+```
+
+A `Detection` represents a measurement in one frame.
+
+A `TrackedObject` represents a persistent hypothesis about the same physical object across multiple frames.
+
+---
+
+## Track Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> NEW
+    NEW --> ACTIVE: successfully matched
+    ACTIVE --> ACTIVE: matched again
+    ACTIVE --> LOST: detection missing
+    LOST --> ACTIVE: object recovered
+    LOST --> REMOVED: timeout exceeded
+    REMOVED --> [*]
+```
+
+This lets identity survive temporary occlusion or missed detections.
+
+Key counters:
+
+- `age` — number of frames the track has existed
+- `hits` — number of successful detector associations
+- `time_since_update` — number of frames since the last successful measurement update
+
+---
+
+# Kalman Motion Estimation
+
+Each tracked object owns its own Kalman filter.
+
+The current state is:
 
 ```text
 [x, y, vx, vy]
 ```
 
-with constant-velocity prediction:
+where:
+
+- `x, y` = bounding-box center position
+- `vx, vy` = image-space velocity in pixels/frame
+
+### Prediction model
 
 ```text
 x_pred = F x
 P_pred = F P F^T + Q
 ```
 
-Measurement update:
+### Measurement update
 
 ```text
 innovation = z - H x
@@ -153,12 +255,53 @@ x = x + K innovation
 P = (I - K H) P
 ```
 
-The detector measures center position while the filter estimates both position and image-space velocity.
+Conceptually:
 
-### IoU association cost
+```mermaid
+flowchart LR
+    A[Previous State<br/>x + P] --> B[Predict with F + Q]
+    B --> C[Predicted State]
+    D[YOLO Measurement z] --> E[Innovation z - Hx]
+    C --> E
+    E --> F[Kalman Gain K]
+    F --> G[Correct State]
+    G --> H[Updated Position + Velocity]
+```
 
-`src/physical_ai/perception/tracking_utils.py`
-`src/physical_ai/perception/association.py`
+The detector measures position, while the filter estimates both position and velocity.
+
+In validation, a track initialized with zero velocity learned motion from successive detector measurements, demonstrating that velocity can be inferred through the state covariance structure.
+
+---
+
+# Bounding-Box Prediction
+
+The current Kalman model predicts the center point.
+
+The predicted center is converted back into a bounding box using the current width and height:
+
+```text
+x1 = cx - width / 2
+x2 = cx + width / 2
+y1 = cy - height / 2
+y2 = cy + height / 2
+```
+
+Current responsibility split:
+
+```text
+Kalman
+→ filtered / predicted center
+
+Detector
+→ current bbox width and height
+```
+
+A later production-oriented version will move toward richer box-state dynamics.
+
+---
+
+# IoU-Based Association
 
 IoU is implemented manually:
 
@@ -172,93 +315,154 @@ For assignment:
 cost = 1 - IoU
 ```
 
-Therefore higher geometric overlap produces lower assignment cost.
-
-Example validated output:
+Therefore:
 
 ```text
-[[0.21917808 1.        ]
- [1.         0.17355372]]
+high IoU
+→ low cost
+→ stronger geometric match
 ```
 
-### Gating and global assignment
+Validated example:
 
-`src/physical_ai/perception/association.py`
+```text
+                Detection 0   Detection 1
 
-The project uses `lap.lapjv` to solve the complete track-to-detection assignment problem rather than matching greedily.
+Track 0           0.219         1.000
+Track 1           1.000         0.174
+```
 
-A configurable maximum cost rejects implausible candidate associations.
+The preferred assignment is therefore:
 
-The association result explicitly contains:
+```text
+Track 0 → Detection 0
+Track 1 → Detection 1
+```
+
+---
+
+# Gating and Global Assignment
+
+A cost threshold rejects geometrically implausible candidates before or during assignment.
+
+The project uses `lap.lapjv` to solve the complete assignment problem globally rather than matching greedily.
+
+```mermaid
+flowchart TD
+    A[Predicted Tracks] --> C[Cost Matrix]
+    B[Current Detections] --> C
+    C --> D[Gating]
+    D --> E[LAP Global Assignment]
+    E --> F[Matched Pairs]
+    E --> G[Unmatched Tracks]
+    E --> H[Unmatched Detections]
+```
+
+Association output explicitly contains:
 
 - matched track/detection pairs
 - unmatched tracks
 - unmatched detections
 
-### Tracker orchestration
+That output directly drives tracker lifecycle logic.
 
-`src/physical_ai/perception/tracker.py`
+---
 
-`ObjectTracker.update(detections)` advances the tracker by one frame:
+# ObjectTracker Orchestration
 
-1. age existing tracks
-2. predict each track using Kalman
-3. construct the IoU cost matrix
-4. solve gated global assignment
-5. update matched tracks
-6. mark unmatched tracks as lost
-7. remove tracks that exceed the lost-frame timeout
-8. create new tracks from unmatched detections
+`ObjectTracker.update(detections)` advances the tracker by one frame.
 
-## Deterministic multi-frame validation
-
-`scripts/demo_object_tracker.py` validates the complete custom tracker with controlled detections.
-
-Observed behavior:
+Per-frame logic:
 
 ```text
-Frame 1
-Track 1 → NEW
-Track 2 → NEW
-
-Frame 2
-Track 1 → ACTIVE, matched again
-Track 2 → ACTIVE, matched again
-
-Frame 3
-Track 1 → ACTIVE, matched again
-Track 2 → LOST, one frame since last update
+1. Age existing tracks
+2. Predict every track using Kalman
+3. Build predicted bboxes
+4. Extract current detection bboxes
+5. Construct IoU cost matrix
+6. Apply gated global assignment
+7. Kalman-update matched tracks
+8. Mark unmatched tracks LOST
+9. Remove tracks exceeding timeout
+10. Create tracks for unmatched detections
+11. Return persistent track set
 ```
 
-This verifies that Kalman prediction, IoU association, LAP matching, persistent IDs, and lifecycle management work together.
+This controller is the current core of the custom MOT implementation.
 
-## Phase 3 experiments and learning scripts
+---
 
-| Script | Purpose |
-|---|---|
-| `track_video_demo.py` | Run YOLO + BoT-SORT and inspect persistent track IDs |
-| `inspect_tracks.py` | Inspect IDs, classes, confidence and bounding boxes |
-| `track_lifecycle_demo.py` | Observe disappearing and reappearing tracks |
-| `inspect_track_motion.py` | Inspect image-space object motion |
-| `demo_iou.py` | Validate manual IoU |
-| `demo_cost_matrix.py` | Understand IoU-based association cost |
-| `demo_assignment.py` | Understand LAP global assignment |
-| `demo_kalman_update.py` | Validate Kalman prediction and correction |
-| `demo_track_kalman_integration.py` | Integrate Kalman into a persistent track |
-| `demo_association_cost_matrix.py` | Build track-vs-detection IoU cost matrix |
-| `demo_assignment_engine.py` | Run gated LAP association |
-| `demo_object_tracker.py` | Validate the complete custom multi-frame tracker |
+# Deterministic Multi-Frame Validation
 
-## Phase 3 status
+Before running the custom tracker on a real video, the complete architecture was validated using controlled multi-frame detections.
+
+### Frame 1
 
 ```text
-✅ YOLO object detection
+Detection A → Track 1 → NEW
+Detection B → Track 2 → NEW
+```
+
+### Frame 2
+
+Both objects move and are successfully reassociated:
+
+```text
+Track 1 → ACTIVE
+Track 2 → ACTIVE
+```
+
+### Frame 3
+
+Only the first object is detected:
+
+```text
+Track 1 → ACTIVE
+Track 2 → LOST
+```
+
+Observed counters:
+
+```text
+Track 1
+age = 3
+hits = 3
+time_since_update = 0
+state = ACTIVE
+
+Track 2
+age = 3
+hits = 2
+time_since_update = 1
+state = LOST
+```
+
+This validates that the following components now work together:
+
+- Kalman prediction
+- covariance propagation
+- predicted bounding boxes
+- IoU cost computation
+- gating
+- LAP global assignment
+- matched-track correction
+- persistent IDs
+- LOST-track handling
+- lifecycle counters
+
+---
+
+# Current Phase 3 Status
+
+```text
+✅ YOLO11 object detection
 ✅ BoT-SORT baseline experiments
-✅ Persistent ID fundamentals
+✅ Persistent-ID fundamentals
 ✅ Track lifecycle
-✅ Motion and image-space velocity
+✅ Image-space motion and velocity
 ✅ Kalman filter implemented from first principles
-✅ Covariance / prediction / measurement correction
+✅ Covariance propagation
+✅ Measurement correction
 ✅ Predicted bounding boxes
 ✅ Manual IoU
 ✅ IoU cost matrix
@@ -266,36 +470,50 @@ This verifies that Kalman prediction, IoU association, LAP matching, persistent 
 ✅ LAP global assignment
 ✅ Matched / unmatched handling
 ✅ Custom ObjectTracker controller
-✅ Deterministic multi-frame tracker validation
+✅ Deterministic multi-frame validation
 
 Next:
 ⏳ Run the custom tracker on real video
-⏳ Visualize IDs, state and trajectories
+⏳ Draw IDs, states and trajectories
 ⏳ Analyze ID switches and failure modes
 ⏳ Improve bounding-box motion state
-⏳ Camera-motion compensation / GMC
-⏳ Re-identification / appearance features
+⏳ Add camera-motion compensation / GMC
+⏳ Add ReID / appearance features
+⏳ Add stronger track confirmation / class stabilization
 ⏳ Compare custom tracker against BoT-SORT
 ```
 
-## Engineering direction
+---
 
-The tracker is intentionally not a toy implementation and not prematurely production-optimized. The architecture is kept modular so the current components can evolve toward a production tracker:
+# Engineering Direction
+
+The current tracker is intentionally:
 
 ```text
-Detection
-   ↓
-Track state
-   ↓
-Motion model
-   ↓
-Association
-   ↓
-Lifecycle
-   ↓
-GMC / ReID / confidence fusion
-   ↓
-Evaluation and failure mining
+not a toy implementation
+not prematurely production-optimized
+structurally production-minded
+readable enough to explain and debug
+designed to evolve rather than be discarded
 ```
 
-The same tracking outputs will later feed the PhysicalAI Data Engine's scene understanding, semantic search, evaluation, and synthetic-data workflows.
+Planned evolution:
+
+```mermaid
+flowchart TD
+    A[Current Custom Tracker<br/>Kalman + IoU + LAP] --> B[Real-Video Evaluation]
+    B --> C[Failure Analysis]
+    C --> D[Improved Bounding-Box Motion Model]
+    C --> E[Kalman / Motion Gating]
+    C --> F[Camera Motion Compensation]
+    C --> G[ReID Appearance Features]
+    D --> H[Stronger MOT System]
+    E --> H
+    F --> H
+    G --> H
+    H --> I[Compare Against BoT-SORT]
+    I --> J[Production-Oriented Tracking Layer]
+    J --> K[Scene Understanding + Search + Failure Mining]
+```
+
+The final objective is not only to track objects, but to create persistent temporal scene data that can feed the broader PhysicalAI Data Engine for **scene understanding, semantic search, evaluation, failure mining, and synthetic-data generation**.
