@@ -40,305 +40,262 @@ Synthetic scenario generation
 
 # Phase 3 — Multi-Object Tracking
 
-Phase 3 extends frame-level object detection into temporal object tracking.
+Phase 3 extends frame-level detection into temporal object identity and motion estimation.
 
-Object detection answers:
+The current milestone now includes a **custom multi-object tracking core built from first principles**, in addition to earlier BoT-SORT experiments.
 
-```text
-What objects are visible in this frame?
-Where are they?
-```
-
-Object tracking adds:
+## Current custom tracking pipeline
 
 ```text
-Is this the same physical object seen in previous frames?
-What persistent ID should it have?
-How is it moving over time?
+YOLO detections
+      │
+      ▼
+Detection abstraction
+      │
+      ▼
+Existing TrackedObject instances
+      │
+      ▼
+Kalman prediction
+      │
+      ▼
+Predicted bounding boxes
+      │
+      ├──────────────────────┐
+      │                      │
+      ▼                      ▼
+Track boxes             Detection boxes
+      │                      │
+      └──────────┬───────────┘
+                 ▼
+            IoU cost matrix
+                 │
+                 ▼
+               Gating
+                 │
+                 ▼
+          Global LAP assignment
+                 │
+       ┌─────────┼───────────┐
+       ▼         ▼           ▼
+    Matched   Unmatched    Unmatched
+     pairs      tracks     detections
+       │         │           │
+       ▼         ▼           ▼
+   Kalman       LOST       Create
+    update      state      new track
+       │         │           │
+       └─────────┼───────────┘
+                 ▼
+         Persistent track IDs
 ```
 
-## Tracking Pipeline
+## Core implementation
 
-```mermaid
-flowchart TD
-    A[Video Frame] --> B[YOLO Object Detection]
-    B --> C[Current Detections]
-    D[Existing Tracks] --> E[Motion Prediction]
-    E --> F[Predicted Track Positions]
-    C --> G[Data Association]
-    F --> G
-    G --> H[Matched Track + Detection]
-    G --> I[Unmatched Track]
-    G --> J[Unmatched Detection]
-    H --> K[Update Existing Track]
-    I --> L[Temporarily Lost Track]
-    J --> M[Create New Track]
-    L --> N{Recovered?}
-    N -->|Yes| K
-    N -->|No / timeout| O[Remove Track]
-```
+### Detection abstraction
 
-The current implementation uses **YOLO11 + BoT-SORT** through Ultralytics.
+`src/physical_ai/perception/detection.py`
 
-Example:
+Detector-specific outputs are converted into reusable `Detection` and `BoundingBox` objects so downstream tracking code is not tightly coupled to Ultralytics.
+
+### Track state and lifecycle
+
+`src/physical_ai/perception/tracking.py`
+
+Each `TrackedObject` owns:
+
+- session-local track ID
+- class and confidence
+- latest filtered bounding box
+- lifecycle state: `NEW`, `ACTIVE`, `LOST`, `REMOVED`
+- `age`, `hits`, and `time_since_update`
+- center-point history
+- its own Kalman motion filter
+
+Lifecycle:
 
 ```text
-Frame 100 → car #17
-Frame 101 → car #17
-Frame 102 → car #17
+NEW
+ │ matched
+ ▼
+ACTIVE
+ │ missed
+ ▼
+LOST
+ ├── matched again ──> ACTIVE
+ └── timeout ────────> REMOVED
 ```
 
-The track ID is maintained by the tracker and is different from the detector confidence.
+### Kalman motion estimation
 
----
+`src/physical_ai/perception/kalman_filter.py`
 
-## Track Lifecycle
-
-A tracked object conceptually moves through:
-
-```mermaid
-stateDiagram-v2
-    [*] --> New
-    New --> Active
-    Active --> Active: matched detection
-    Active --> Lost: detection missing
-    Lost --> Active: object recovered
-    Lost --> Removed: timeout exceeded
-    Removed --> [*]
-```
-
-This allows a track to survive short periods of occlusion or missed detections.
-
-During experiments, tracks were observed disappearing for several frames and later recovering with the same ID.
-
----
-
-## Motion Prediction
-
-A track stores information over time rather than only a bounding box.
-
-A simplified state can be represented as:
+The current learning-oriented state is:
 
 ```text
-[x, y, width, height, vx, vy]
+[x, y, vx, vy]
 ```
 
-where:
-
-- `x, y` represent position
-- `width, height` represent object size
-- `vx, vy` represent image-space velocity
-
-A simple constant-velocity prediction is:
+with constant-velocity prediction:
 
 ```text
-next_x = x + vx
-next_y = y + vy
+x_pred = F x
+P_pred = F P F^T + Q
 ```
 
-Real multi-object trackers use filtering methods such as a **Kalman filter** to combine:
+Measurement update:
 
 ```text
-motion prediction
-+
-new detector measurement
-+
-uncertainty
+innovation = z - H x
+S = H P H^T + R
+K = P H^T S^-1
+x = x + K innovation
+P = (I - K H) P
 ```
 
-This reduces jitter and improves association between frames.
+The detector measures center position while the filter estimates both position and image-space velocity.
 
----
+### IoU association cost
 
-## Intersection over Union — IoU
+`src/physical_ai/perception/tracking_utils.py`
+`src/physical_ai/perception/association.py`
 
-<p align="center">
-  <img src="docs/images/IoU%20Explained_%20Bounding%20Box%20Overlap.png"
-       alt="Intersection over Union explanation"
-       width="900">
-</p>
-
-IoU measures how strongly two bounding boxes overlap.
+IoU is implemented manually:
 
 ```text
-IoU = Intersection Area / Union Area
+IoU = intersection area / union area
 ```
 
-For two example boxes:
-
-```text
-Box A = (100, 100, 200, 200)
-Box B = (150, 150, 250, 250)
-```
-
-each box has:
-
-```text
-Area = 100 × 100 = 10,000
-```
-
-Their overlap is:
-
-```text
-50 × 50 = 2,500
-```
-
-Union:
-
-```text
-10,000 + 10,000 - 2,500
-= 17,500
-```
-
-Therefore:
-
-```text
-IoU = 2,500 / 17,500
-    ≈ 0.143
-```
-
-A higher IoU generally indicates a stronger geometric match.
-
-```mermaid
-flowchart LR
-    A[Previous / Predicted Bounding Box] --> C[Calculate IoU]
-    B[Current Detection Bounding Box] --> C
-    C --> D[High IoU<br/>Likely Match]
-    C --> E[Low IoU<br/>Weak Match]
-```
-
-The project implements IoU manually in:
-
-```text
-src/physical_ai/perception/tracking_utils.py
-```
-
----
-
-## Tracking Cost Matrix
-
-For simplified IoU matching, the project uses:
+For assignment:
 
 ```text
 cost = 1 - IoU
 ```
 
-Therefore:
+Therefore higher geometric overlap produces lower assignment cost.
+
+Example validated output:
 
 ```text
-High IoU → Low cost → Better match
-Low IoU  → High cost → Worse match
+[[0.21917808 1.        ]
+ [1.         0.17355372]]
 ```
 
-Example:
+### Gating and global assignment
+
+`src/physical_ai/perception/association.py`
+
+The project uses `lap.lapjv` to solve the complete track-to-detection assignment problem rather than matching greedily.
+
+A configurable maximum cost rejects implausible candidate associations.
+
+The association result explicitly contains:
+
+- matched track/detection pairs
+- unmatched tracks
+- unmatched detections
+
+### Tracker orchestration
+
+`src/physical_ai/perception/tracker.py`
+
+`ObjectTracker.update(detections)` advances the tracker by one frame:
+
+1. age existing tracks
+2. predict each track using Kalman
+3. construct the IoU cost matrix
+4. solve gated global assignment
+5. update matched tracks
+6. mark unmatched tracks as lost
+7. remove tracks that exceed the lost-frame timeout
+8. create new tracks from unmatched detections
+
+## Deterministic multi-frame validation
+
+`scripts/demo_object_tracker.py` validates the complete custom tracker with controlled detections.
+
+Observed behavior:
 
 ```text
-              Detection 0    Detection 1
+Frame 1
+Track 1 → NEW
+Track 2 → NEW
 
-Track 0          0.219          1.000
-Track 1          1.000          0.174
+Frame 2
+Track 1 → ACTIVE, matched again
+Track 2 → ACTIVE, matched again
+
+Frame 3
+Track 1 → ACTIVE, matched again
+Track 2 → LOST, one frame since last update
 ```
 
-The best assignment is:
+This verifies that Kalman prediction, IoU association, LAP matching, persistent IDs, and lifecycle management work together.
 
-```text
-Track 0 → Detection 0
-Track 1 → Detection 1
-```
-
-with total cost:
-
-```text
-0.219 + 0.174 = 0.393
-```
-
----
-
-## Linear Assignment
-
-Instead of matching every track greedily, the tracking system solves the complete assignment problem.
-
-This avoids situations where one track takes a detection that is a much better match for another track.
-
-The project demonstrates this using the `lap` package:
-
-```text
-Predicted Tracks
-       +
-Current Detections
-       ↓
-Cost Matrix
-       ↓
-Linear Assignment Solver
-       ↓
-Matched Pairs
-Unmatched Tracks
-Unmatched Detections
-```
-
-A cost threshold is also demonstrated:
-
-```python
-cost_limit=0.60
-```
-
-Example result:
-
-```text
-Track 0 → Detection 0
-Track 1 → Detection 1
-Track 2 → Detection -1
-```
-
-`-1` means that Track 2 has no acceptable matching detection.
-
-This leads directly into tracker lifecycle management:
-
-```text
-Matched track
-→ update existing track
-
-Unmatched track
-→ temporarily lost
-
-Unmatched detection
-→ potential new track
-
-Lost too long
-→ removed
-```
-
----
-
-## Phase 3 Learning Scripts
+## Phase 3 experiments and learning scripts
 
 | Script | Purpose |
 |---|---|
 | `track_video_demo.py` | Run YOLO + BoT-SORT and inspect persistent track IDs |
-| `inspect_tracks.py` | Inspect ID, class, confidence and bounding boxes |
+| `inspect_tracks.py` | Inspect IDs, classes, confidence and bounding boxes |
 | `track_lifecycle_demo.py` | Observe disappearing and reappearing tracks |
-| `inspect_track_motion.py` | Calculate center movement and simple velocity |
-| `demo_iou.py` | Implement and test IoU |
-| `demo_cost_matrix.py` | Convert IoU values into association costs |
-| `demo_assignment.py` | Solve global track-to-detection assignment using LAP |
+| `inspect_track_motion.py` | Inspect image-space object motion |
+| `demo_iou.py` | Validate manual IoU |
+| `demo_cost_matrix.py` | Understand IoU-based association cost |
+| `demo_assignment.py` | Understand LAP global assignment |
+| `demo_kalman_update.py` | Validate Kalman prediction and correction |
+| `demo_track_kalman_integration.py` | Integrate Kalman into a persistent track |
+| `demo_association_cost_matrix.py` | Build track-vs-detection IoU cost matrix |
+| `demo_assignment_engine.py` | Run gated LAP association |
+| `demo_object_tracker.py` | Validate the complete custom multi-frame tracker |
 
-### Phase 3 Status
+## Phase 3 status
 
 ```text
-✅ Persistent object IDs
-✅ Track inspection
+✅ YOLO object detection
+✅ BoT-SORT baseline experiments
+✅ Persistent ID fundamentals
 ✅ Track lifecycle
-✅ Motion / velocity fundamentals
-✅ Kalman-filter concepts
-✅ IoU implemented manually
-✅ Cost matrices
-✅ Linear assignment
-✅ Matched vs unmatched tracks
+✅ Motion and image-space velocity
+✅ Kalman filter implemented from first principles
+✅ Covariance / prediction / measurement correction
+✅ Predicted bounding boxes
+✅ Manual IoU
+✅ IoU cost matrix
+✅ Gating
+✅ LAP global assignment
+✅ Matched / unmatched handling
+✅ Custom ObjectTracker controller
+✅ Deterministic multi-frame tracker validation
 
 Next:
-⏳ BoT-SORT internals
-⏳ Appearance / Re-identification
-⏳ Camera-motion compensation
-⏳ Reusable PhysicalAI tracking abstraction
-⏳ Track visualization and trajectories
+⏳ Run the custom tracker on real video
+⏳ Visualize IDs, state and trajectories
+⏳ Analyze ID switches and failure modes
+⏳ Improve bounding-box motion state
+⏳ Camera-motion compensation / GMC
+⏳ Re-identification / appearance features
+⏳ Compare custom tracker against BoT-SORT
 ```
+
+## Engineering direction
+
+The tracker is intentionally not a toy implementation and not prematurely production-optimized. The architecture is kept modular so the current components can evolve toward a production tracker:
+
+```text
+Detection
+   ↓
+Track state
+   ↓
+Motion model
+   ↓
+Association
+   ↓
+Lifecycle
+   ↓
+GMC / ReID / confidence fusion
+   ↓
+Evaluation and failure mining
+```
+
+The same tracking outputs will later feed the PhysicalAI Data Engine's scene understanding, semantic search, evaluation, and synthetic-data workflows.
